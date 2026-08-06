@@ -1,17 +1,15 @@
-var timeout;
-var interval;
-var stopwatchMode;
-var intervalRefreshText;
+let timeout;
+let interval;
+let stopwatchMode;
+let intervalRefreshText;
 
-var setDate;
-var pauseDate;
-var alarmDate;
+let setDate;
+let pauseDate;
+let alarmDate;
 
-var greenColor = [76, 187, 23, 255];
-var yellowColor = [250, 150, 0, 255];
-var guiLagAdjustment = 1000;
-
-var alarmSound = new Audio("chime.mp3");
+const greenColor = [76, 187, 23, 255];
+const yellowColor = [250, 150, 0, 255];
+const guiLagAdjustment = 1000;
 
 function setAlarm(tMillis)
 {
@@ -41,10 +39,10 @@ function ringIn(tMillis)
     setDate = new Date();
     timeout = setTimeout(ring, alarmDate.getTime() - setDate.getTime());
 
-    chrome.browserAction.setBadgeBackgroundColor({color:greenColor});
+    try { chrome.action.setBadgeBackgroundColor({color:greenColor}); } catch(e) {}
     clearInterval(intervalRefreshText);
     intervalRefreshText = setInterval(function() {
-        chrome.browserAction.setBadgeText({text: getTimeLeftString()});
+        try { chrome.action.setBadgeText({text: getTimeLeftString()}); } catch(e) {}
     }, 100);
 }
 
@@ -53,11 +51,10 @@ function startStopwatch(millisPassed)
     stopwatchMode = true;
     pauseDate = null;
     setDate = new Date(new Date().getTime() - millisPassed);
-
-    chrome.browserAction.setBadgeBackgroundColor({color:greenColor});
+    try { chrome.action.setBadgeBackgroundColor({color:greenColor}); } catch(e) {}
     clearInterval(intervalRefreshText);
     intervalRefreshText = setInterval(function() {
-        chrome.browserAction.setBadgeText({text: getTimePassedString()});
+        try { chrome.action.setBadgeText({text: getTimePassedString()}); } catch(e) {}
     }, 100);
 }
 
@@ -65,7 +62,7 @@ function pause()
 {
     pauseDate = new Date();
     clearTimeout(timeout);
-    chrome.browserAction.setBadgeBackgroundColor({color:yellowColor});
+    try { chrome.action.setBadgeBackgroundColor({color:yellowColor}); } catch(e) {}
 }
 
 function resume()
@@ -153,7 +150,25 @@ function ring()
     }
     chrome.notifications.create("", options, didCreateNotification);
 
-    alarmSound.play();
+    // play sound via offscreen document (works in MV3 service worker)
+    try {
+        if (chrome.offscreen && chrome.offscreen.createDocument) {
+            chrome.offscreen.createDocument({
+                url: 'offscreen.html',
+                reasons: ['AUDIO_PLAYBACK'],
+                justification: 'Play alarm sound'
+            }).then(() => {
+                chrome.runtime.sendMessage({action: 'playSound'});
+            }).catch(() => {
+                chrome.runtime.sendMessage({action: 'playSound'});
+            });
+        } else {
+            chrome.runtime.sendMessage({action: 'playSound'});
+        }
+    } catch(e) {
+        try { chrome.runtime.sendMessage({action: 'playSound'}); } catch(err) {}
+    }
+
     turnOff();
 }
 
@@ -164,10 +179,79 @@ function turnOff()
     alarmDate = null;
     pauseDate = null;
     setDate = null;
-    chrome.browserAction.setBadgeText({text: ""});
+    try { chrome.action.setBadgeText({text: ""}); } catch(e) {}
 }
 
 function error()
 {
-    alert("Please enter a number between 1 and 240.");
+    try {
+        chrome.notifications.create({
+            type: 'basic',
+            title: 'Timer',
+            message: 'Please enter a number between 1 and 240.',
+            iconUrl: 'img/48.png'
+        });
+    } catch(e) {}
 }
+
+// Message-based API for popup and other pages
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    try {
+        switch(msg.action) {
+            case 'getState':
+                sendResponse({
+                    alarmDate: alarmDate ? alarmDate.getTime() : null,
+                    setDate: setDate ? setDate.getTime() : null,
+                    pauseDate: pauseDate ? pauseDate.getTime() : null,
+                    interval: interval || 0,
+                    stopwatchMode: !!stopwatchMode
+                });
+                break;
+            case 'getDisplay':
+                sendResponse({
+                    timeLeftString: alarmDate ? getTimeLeftString() : null,
+                    timePassedString: stopwatchMode ? getTimePassedString() : null,
+                    percent: alarmDate ? getTimeLeftPercent() : 0,
+                    stopwatchMode: !!stopwatchMode
+                });
+                break;
+            case 'setAlarm':
+                setAlarm(msg.millis);
+                sendResponse({ok:true});
+                break;
+            case 'startStopwatch':
+                startStopwatch(msg.millis || 0);
+                sendResponse({ok:true});
+                break;
+            case 'pause':
+                pause();
+                sendResponse({ok:true});
+                break;
+            case 'resume':
+                resume();
+                sendResponse({ok:true});
+                break;
+            case 'restart':
+                restart();
+                sendResponse({ok:true});
+                break;
+            case 'turnOff':
+                turnOff();
+                sendResponse({ok:true});
+                break;
+            case 'playSound':
+                // forwarded to offscreen document; no-op here
+                sendResponse({ok:true});
+                break;
+            case 'error':
+                error();
+                sendResponse({ok:true});
+                break;
+            default:
+                sendResponse({ok:false, error: 'unknown action'});
+        }
+    } catch(e) {
+        sendResponse({ok:false, error: String(e)});
+    }
+    return true;
+});

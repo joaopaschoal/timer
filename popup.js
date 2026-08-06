@@ -1,10 +1,16 @@
-var refreshDisplayTimeout;
-var bgpage = chrome.extension.getBackgroundPage();
-var previousValues = [3, 5, 10, 30];
-var editing = false;
+let refreshDisplayTimeout;
+let previousValues = [3, 5, 10, 30];
+let editing = false;
 
-document.addEventListener('DOMContentLoaded', function ()
-{
+function callBg(message) {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage(message, function(response) {
+            resolve(response);
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
     load();
     document.querySelector('#start').addEventListener('click', setTimer);
     document.querySelector('#cancel').addEventListener('click', cancel);
@@ -29,7 +35,7 @@ function hide(section)
     document.getElementById(section).style.display = "none";
 }
 
-function load()
+async function load()
 {
     hide("settings");
     hide("modify");
@@ -37,7 +43,8 @@ function load()
     editing = false;
 
     // if timer is paused, show resume button and hide pause button
-    if(bgpage.pauseDate)
+    const state = await callBg({action: 'getState'});
+    if (state && state.pauseDate)
     {
         showInline("resume");
         hide("pause");
@@ -49,12 +56,11 @@ function load()
             document.getElementById("s"+i).textContent = localStorage[i];
 
     // if timer is off, show settings
-    if(!bgpage.alarmDate && !bgpage.setDate)
+    if (!state.alarmDate && !state.setDate)
     {
         show("settings");
         hide("display");
     }
-
     // else, show countdown
     else
     {
@@ -133,7 +139,7 @@ function swapBack()
     editing = false;
 }
 
-function setTimer()
+async function setTimer()
 {
     // make sure we're dealing with text not fields
     if(editing)
@@ -146,14 +152,13 @@ function setTimer()
 
     if (isValidChoice())
     {
-        // set timer or stopwatch, hide settings, display reset button
         if(isValid(num))
         {
-            bgpage.setAlarm(num * 60000);
+            await callBg({action: 'setAlarm', millis: num * 60000});
         }
         else if (isStopwatchChecked())
         {
-            bgpage.startStopwatch(0);
+            await callBg({action: 'startStopwatch', millis: 0});
         }
         hide("settings");
         show("modify");
@@ -161,7 +166,7 @@ function setTimer()
         refreshDisplay();
     }
     else
-        bgpage.error();
+        await callBg({action: 'error'});
 }
 
 function isValidChoice()
@@ -180,20 +185,20 @@ function isValid(amt)
         return true;
 }
 
-function refreshDisplay()
+async function refreshDisplay()
 {
-    if (bgpage.stopwatchMode)
+    const disp = await callBg({action: 'getDisplay'});
+    if(disp && disp.stopwatchMode)
     {
-        document.getElementById("bar").textContent = bgpage.getTimePassedString();
+        document.getElementById("bar").textContent = disp.timePassedString || '';
         document.getElementById("bar").style.width = "100%";
     }
     else
     {
-        percent = bgpage.getTimeLeftPercent();
-
+        const percent = disp ? disp.percent : 0;
         if(percent < 15)
             document.getElementById("bar").style.color = "grey";
-        document.getElementById("bar").textContent = bgpage.getTimeLeftString();
+        document.getElementById("bar").textContent = disp.timeLeftString || '';
         document.getElementById("bar").style.width = percent + "%";
     }
 
@@ -204,7 +209,7 @@ function pauseTimer()
 {
     hide("pause");
     showInline("resume");
-    bgpage.pause();
+    callBg({action: 'pause'});
     clearTimeout(refreshDisplayTimeout);
 }
 
@@ -213,7 +218,7 @@ function resumeTimer()
     hide("resume");
     showInline("pause");
     refreshDisplay();
-    bgpage.resume();
+    callBg({action: 'resume'});
 }
 
 function restartTimer()
@@ -221,17 +226,17 @@ function restartTimer()
     hide("resume");
     showInline("pause");
     refreshDisplay();
-    bgpage.restart();
+    callBg({action: 'restart'});
 }
 
 function cancel()
 {
     clearTimeout(refreshDisplayTimeout);
-    bgpage.turnOff();
+    callBg({action: 'turnOff'});
     hide("display");
     show("settings");
     hide("modify");
-    bgpage.stopwatchMode = false;
+    // nothing else needed; state lives in service worker
 }
 
 function isStopwatchChecked()
