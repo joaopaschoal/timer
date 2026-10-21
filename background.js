@@ -91,6 +91,48 @@ function restart()
     }
 }
 
+function addTime(millis)
+{
+    if (!Number.isFinite(millis) || millis < 0)
+        throw new Error('millis must be a finite non-negative number');
+
+    adjustTime(millis);
+}
+
+function subtractTime(millis)
+{
+    if (!Number.isFinite(millis) || millis < 0)
+        throw new Error('millis must be a finite non-negative number');
+
+    adjustTime(-millis);
+}
+
+function adjustTime(millis)
+{
+    if (!Number.isFinite(millis))
+        throw new Error('millis must be a finite non-negative number');
+
+    if (stopwatchMode)
+    {
+        if (!setDate)
+            throw new Error('No active timer');
+
+        setDate = new Date(setDate.getTime() - millis);
+        return;
+    }
+
+    if (!alarmDate)
+        throw new Error('No active timer');
+
+    interval += millis;
+    alarmDate = new Date(alarmDate.getTime() + millis);
+    if (!pauseDate)
+    {
+        clearTimeout(timeout);
+        timeout = setTimeout(ring, alarmDate.getTime() - Date.now());
+    }
+}
+
 function getTimeLeft()
 {
     if (pauseDate)
@@ -221,6 +263,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 break;
             case 'startStopwatch':
                 startStopwatch(msg.millis || 0);
+                sendResponse({ok:true});
+                break;
+            case 'addTime':
+                addTime(msg.millis);
+                sendResponse({ok:true});
+                break;
+            case 'subtractTime':
+                subtractTime(msg.millis);
                 sendResponse({ok:true});
                 break;
             case 'pause':
